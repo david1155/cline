@@ -23,6 +23,7 @@ export interface ApiHandlerOptions {
 	liteLlmModelId?: string
 	liteLlmApiKey?: string
 	anthropicBaseUrl?: string
+	anthropicThinkingBudgetTokens?: number // Budget tokens for extended thinking
 	openRouterApiKey?: string
 	openRouterModelId?: string
 	openRouterModelInfo?: ModelInfo
@@ -70,6 +71,7 @@ export interface ModelInfo {
 	supportsImages?: boolean
 	supportsComputerUse?: boolean
 	supportsPromptCache: boolean // this value is hardcoded for now
+	supportsThinking?: boolean // Indicates if the model supports extended thinking
 	inputPrice?: number
 	outputPrice?: number
 	cacheWritesPrice?: number
@@ -82,6 +84,18 @@ export interface ModelInfo {
 export type AnthropicModelId = keyof typeof anthropicModels
 export const anthropicDefaultModelId: AnthropicModelId = "claude-3-7-sonnet-20250219"
 export const anthropicModels = {
+	"claude-3-7-sonnet-20250219-think": {
+		maxTokens: 128000, // Set to maximum possible
+		contextWindow: 200_000,
+		supportsImages: true,
+		supportsComputerUse: true,
+		supportsPromptCache: true,
+		supportsThinking: true,
+		inputPrice: 3.0,
+		outputPrice: 15.0,
+		cacheWritesPrice: 3.75,
+		cacheReadsPrice: 0.3,
+	},
 	"claude-3-7-sonnet-20250219": {
 		maxTokens: 8192,
 		contextWindow: 200_000,

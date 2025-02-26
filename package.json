@@ -186,6 +186,11 @@
 					"type": "boolean",
 					"default": true,
 					"description": "Controls whether the MCP Marketplace is enabled."
+				},
+				"cline.modelSettings.anthropic.thinkingBudgetTokens": {
+					"type": "number",
+					"default": 16000,
+					"description": "Budget tokens for extended thinking when using Claude models with thinking capability. Values above 64000 will automatically enable 128k output capability. Higher values may result in more thorough reasoning."
 				}
 			}
 		}

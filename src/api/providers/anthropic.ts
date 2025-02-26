@@ -22,102 +22,185 @@ export class AnthropicHandler implements ApiHandler {
 		const model = this.getModel()
 		let stream: AnthropicStream<Anthropic.Beta.PromptCaching.Messages.RawPromptCachingBetaMessageStreamEvent>
 		const modelId = model.id
-		switch (modelId) {
-			// 'latest' alias does not support cache_control
-			case "claude-3-7-sonnet-20250219":
-			case "claude-3-5-sonnet-20241022":
-			case "claude-3-5-haiku-20241022":
-			case "claude-3-opus-20240229":
-			case "claude-3-haiku-20240307": {
-				/*
-				The latest message will be the new user message, one before will be the assistant message from a previous request, and the user message before that will be a previously cached user message. So we need to mark the latest user message as ephemeral to cache it for the next request, and mark the second to last user message as ephemeral to let the server know the last message to retrieve from the cache for the current request..
-				*/
-				const userMsgIndices = messages.reduce(
-					(acc, msg, index) => (msg.role === "user" ? [...acc, index] : acc),
-					[] as number[],
-				)
-				const lastUserMsgIndex = userMsgIndices[userMsgIndices.length - 1] ?? -1
-				const secondLastMsgUserIndex = userMsgIndices[userMsgIndices.length - 2] ?? -1
-				stream = await this.client.beta.promptCaching.messages.create(
+
+		// Check if the model supports thinking
+		const supportsThinking = model.info.supportsThinking
+
+		// Get the budget tokens from options or use default
+		const budgetTokens = this.options.anthropicThinkingBudgetTokens || 16000
+
+		// Determine if we need to enable 128k output based on budget tokens
+		const needs128kOutput = budgetTokens > 64000
+
+		if (supportsThinking) {
+			// Models with thinking capability
+			const userMsgIndices = messages.reduce(
+				(acc, msg, index) => (msg.role === "user" ? [...acc, index] : acc),
+				[] as number[],
+			)
+			const lastUserMsgIndex = userMsgIndices[userMsgIndices.length - 1] ?? -1
+			const secondLastMsgUserIndex = userMsgIndices[userMsgIndices.length - 2] ?? -1
+
+			// Create request options with thinking enabled
+			const requestOptions: any = {
+				model: modelId.replace("-think", ""), // Use the base model ID
+				max_tokens: needs128kOutput ? 128000 : model.info.maxTokens || 8192,
+				temperature: 0,
+				thinking: {
+					type: "enabled",
+					budget_tokens: budgetTokens,
+				},
+				system: [
 					{
-						model: modelId,
-						max_tokens: model.info.maxTokens || 8192,
-						temperature: 0,
-						system: [
-							{
-								text: systemPrompt,
-								type: "text",
-								cache_control: { type: "ephemeral" },
-							},
-						], // setting cache breakpoint for system prompt so new tasks can reuse it
-						messages: messages.map((message, index) => {
-							if (index === lastUserMsgIndex || index === secondLastMsgUserIndex) {
-								return {
-									...message,
-									content:
-										typeof message.content === "string"
-											? [
-													{
-														type: "text",
-														text: message.content,
+						text: systemPrompt,
+						type: "text",
+						cache_control: { type: "ephemeral" },
+					},
+				],
+				messages: messages.map((message, index) => {
+					if (index === lastUserMsgIndex || index === secondLastMsgUserIndex) {
+						return {
+							...message,
+							content:
+								typeof message.content === "string"
+									? [
+											{
+												type: "text",
+												text: message.content,
+												cache_control: {
+													type: "ephemeral",
+												},
+											},
+										]
+									: message.content.map((content, contentIndex) =>
+											contentIndex === message.content.length - 1
+												? {
+														...content,
 														cache_control: {
 															type: "ephemeral",
 														},
-													},
-												]
-											: message.content.map((content, contentIndex) =>
-													contentIndex === message.content.length - 1
-														? {
-																...content,
-																cache_control: {
-																	type: "ephemeral",
-																},
-															}
-														: content,
-												),
-								}
-							}
-							return message
-						}),
-						// tools, // cache breakpoints go from tools > system > messages, and since tools dont change, we can just set the breakpoint at the end of system (this avoids having to set a breakpoint at the end of tools which by itself does not meet min requirements for haiku caching)
-						// tool_choice: { type: "auto" },
-						// tools: tools,
-						stream: true,
-					},
-					(() => {
-						// prompt caching: https://x.com/alexalbert__/status/1823751995901272068
-						// https://github.com/anthropics/anthropic-sdk-typescript?tab=readme-ov-file#default-headers
-						// https://github.com/anthropics/anthropic-sdk-typescript/commit/c920b77fc67bd839bfeb6716ceab9d7c9bbe7393
-						switch (modelId) {
-							case "claude-3-7-sonnet-20250219":
-							case "claude-3-5-sonnet-20241022":
-							case "claude-3-5-haiku-20241022":
-							case "claude-3-opus-20240229":
-							case "claude-3-haiku-20240307":
-								return {
-									headers: {
-										"anthropic-beta": "prompt-caching-2024-07-31",
-									},
-								}
-							default:
-								return undefined
+													}
+												: content,
+										),
 						}
-					})(),
-				)
-				break
+					}
+					return message
+				}),
+				stream: true,
 			}
-			default: {
-				stream = (await this.client.messages.create({
-					model: modelId,
-					max_tokens: model.info.maxTokens || 8192,
-					temperature: 0,
-					system: [{ text: systemPrompt, type: "text" }],
-					messages,
-					// tools,
-					// tool_choice: { type: "auto" },
-					stream: true,
-				})) as any
-				break
+
+			// Determine headers based on capabilities
+			let betaHeaders = "prompt-caching-2024-07-31"
+
+			// Add 128k output header if needed
+			if (needs128kOutput) {
+				betaHeaders += ", output-128k-2025-02-19"
+			}
+
+			// Create the stream with appropriate headers
+			stream = await this.client.beta.promptCaching.messages.create(requestOptions, {
+				headers: {
+					"anthropic-beta": betaHeaders,
+				},
+			})
+		} else {
+			switch (modelId) {
+				// 'latest' alias does not support cache_control
+				case "claude-3-7-sonnet-20250219":
+				case "claude-3-5-sonnet-20241022":
+				case "claude-3-5-haiku-20241022":
+				case "claude-3-opus-20240229":
+				case "claude-3-haiku-20240307": {
+					/*
+					The latest message will be the new user message, one before will be the assistant message from a previous request, and the user message before that will be a previously cached user message. So we need to mark the latest user message as ephemeral to cache it for the next request, and mark the second to last user message as ephemeral to let the server know the last message to retrieve from the cache for the current request..
+					*/
+					const userMsgIndices = messages.reduce(
+						(acc, msg, index) => (msg.role === "user" ? [...acc, index] : acc),
+						[] as number[],
+					)
+					const lastUserMsgIndex = userMsgIndices[userMsgIndices.length - 1] ?? -1
+					const secondLastMsgUserIndex = userMsgIndices[userMsgIndices.length - 2] ?? -1
+					stream = await this.client.beta.promptCaching.messages.create(
+						{
+							model: modelId,
+							max_tokens: model.info.maxTokens || 8192,
+							temperature: 0,
+							system: [
+								{
+									text: systemPrompt,
+									type: "text",
+									cache_control: { type: "ephemeral" },
+								},
+							], // setting cache breakpoint for system prompt so new tasks can reuse it
+							messages: messages.map((message, index) => {
+								if (index === lastUserMsgIndex || index === secondLastMsgUserIndex) {
+									return {
+										...message,
+										content:
+											typeof message.content === "string"
+												? [
+														{
+															type: "text",
+															text: message.content,
+															cache_control: {
+																type: "ephemeral",
+															},
+														},
+													]
+												: message.content.map((content, contentIndex) =>
+														contentIndex === message.content.length - 1
+															? {
+																	...content,
+																	cache_control: {
+																		type: "ephemeral",
+																	},
+																}
+															: content,
+													),
+									}
+								}
+								return message
+							}),
+							// tools, // cache breakpoints go from tools > system > messages, and since tools dont change, we can just set the breakpoint at the end of system (this avoids having to set a breakpoint at the end of tools which by itself does not meet min requirements for haiku caching)
+							// tool_choice: { type: "auto" },
+							// tools: tools,
+							stream: true,
+						},
+						(() => {
+							// prompt caching: https://x.com/alexalbert__/status/1823751995901272068
+							// https://github.com/anthropics/anthropic-sdk-typescript?tab=readme-ov-file#default-headers
+							// https://github.com/anthropics/anthropic-sdk-typescript/commit/c920b77fc67bd839bfeb6716ceab9d7c9bbe7393
+							switch (modelId) {
+								case "claude-3-7-sonnet-20250219":
+								case "claude-3-5-sonnet-20241022":
+								case "claude-3-5-haiku-20241022":
+								case "claude-3-opus-20240229":
+								case "claude-3-haiku-20240307":
+									return {
+										headers: {
+											"anthropic-beta": "prompt-caching-2024-07-31",
+										},
+									}
+								default:
+									return undefined
+							}
+						})(),
+					)
+					break
+				}
+				default: {
+					stream = (await this.client.messages.create({
+						model: modelId,
+						max_tokens: model.info.maxTokens || 8192,
+						temperature: 0,
+						system: [{ text: systemPrompt, type: "text" }],
+						messages,
+						// tools,
+						// tool_choice: { type: "auto" },
+						stream: true,
+					})) as any
+					break
+				}
 			}
 		}
 
@@ -161,6 +244,20 @@ export class AnthropicHandler implements ApiHandler {
 								text: chunk.content_block.text,
 							}
 							break
+						default:
+							// Handle thinking blocks if present
+							if ((chunk.content_block as any).type === "thinking") {
+								yield {
+									type: "reasoning",
+									reasoning: (chunk.content_block as any).thinking,
+								}
+							} else if ((chunk.content_block as any).type === "redacted_thinking") {
+								yield {
+									type: "reasoning",
+									reasoning: "[Redacted thinking]",
+								}
+							}
+							break
 					}
 					break
 				case "content_block_delta":
@@ -169,6 +266,15 @@ export class AnthropicHandler implements ApiHandler {
 							yield {
 								type: "text",
 								text: chunk.delta.text,
+							}
+							break
+						default:
+							// Handle thinking deltas if present
+							if ((chunk.delta as any).type === "thinking_delta") {
+								yield {
+									type: "reasoning",
+									reasoning: (chunk.delta as any).thinking,
+								}
 							}
 							break
 					}
