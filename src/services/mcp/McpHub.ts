@@ -1,5 +1,8 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js"
 import { StdioClientTransport, StdioServerParameters } from "@modelcontextprotocol/sdk/client/stdio.js"
+
+// Define a custom timeout of 15 minutes (900,000 ms)
+const MCP_REQUEST_TIMEOUT_MS = 900000
 import {
 	CallToolResultSchema,
 	ListResourcesResultSchema,
@@ -595,6 +598,7 @@ export class McpHub {
 				},
 			},
 			CallToolResultSchema,
+			{ timeout: MCP_REQUEST_TIMEOUT_MS }, // Set timeout to 15 minutes
 		)
 	}
 
