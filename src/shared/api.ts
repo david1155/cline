@@ -72,6 +72,7 @@ export interface ModelInfo {
 	supportsComputerUse?: boolean
 	supportsPromptCache: boolean // this value is hardcoded for now
 	supportsThinking?: boolean // Indicates if the model supports extended thinking
+	supportsExtendedOutput?: boolean // Indicates if the model uses the 128k output beta header
 	inputPrice?: number
 	outputPrice?: number
 	cacheWritesPrice?: number
@@ -85,7 +86,7 @@ export type AnthropicModelId = keyof typeof anthropicModels
 export const anthropicDefaultModelId: AnthropicModelId = "claude-3-7-sonnet-20250219"
 export const anthropicModels = {
 	"claude-3-7-sonnet-20250219-think": {
-		maxTokens: 128000, // Set to maximum possible
+		maxTokens: 64000, // Maximum allowed by the API
 		contextWindow: 200_000,
 		supportsImages: true,
 		supportsComputerUse: true,
@@ -782,7 +783,6 @@ export const mistralModels = {
 export type LiteLLMModelId = string
 export const liteLlmDefaultModelId = "gpt-3.5-turbo"
 export const liteLlmModelInfoSaneDefaults: ModelInfo = {
-	maxTokens: -1,
 	contextWindow: 128_000,
 	supportsImages: true,
 	supportsPromptCache: false,
