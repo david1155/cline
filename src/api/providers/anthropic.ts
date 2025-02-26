@@ -45,7 +45,7 @@ export class AnthropicHandler implements ApiHandler {
 			const requestOptions: any = {
 				model: modelId.replace("-think", ""), // Use the base model ID
 				max_tokens: needs128kOutput ? 128000 : model.info.maxTokens || 8192,
-				temperature: 0,
+				temperature: 1, // Must be exactly 1 when thinking is enabled
 				thinking: {
 					type: "enabled",
 					budget_tokens: budgetTokens,
