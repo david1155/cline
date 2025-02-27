@@ -87,14 +87,22 @@ export class AnthropicHandler implements ApiHandler {
 			// We'll add a small buffer to ensure this constraint is met
 			const tokenBuffer = 1000 // Buffer to ensure max_tokens > budget_tokens
 			
-			// Cap max_tokens at available tokens or model limit, but ensure it's greater than budget_tokens
-			const maxTokensValue = Math.max(
-				budgetTokens + tokenBuffer, // Ensure max_tokens > budget_tokens
-				Math.min(
-					availableTokens,
-					needs128kOutput ? 128000 : 64000 // Respect the 128k limit when needed
-				)
-			)
+			// For large budgets like 128k, we need to ensure max_tokens is greater
+			// but also respect the context window limits
+			let maxTokensValue: number
+			let adjustedBudgetTokens = budgetTokens
+			
+			// If available tokens is less than budget_tokens + buffer, we need to adjust
+			if (availableTokens < budgetTokens + tokenBuffer) {
+				// We need to reduce the budget_tokens to fit within available context
+				adjustedBudgetTokens = Math.max(0, availableTokens - tokenBuffer)
+				maxTokensValue = availableTokens
+			} else {
+				// We have enough space, so use the original budget plus buffer
+				// but cap at the model's maximum limit
+				const modelLimit = needs128kOutput ? 128000 : 64000
+				maxTokensValue = Math.min(budgetTokens + tokenBuffer, modelLimit)
+			}
 
 			const requestOptions: any = {
 				model: modelId.replace("-think", ""), // Use the base model ID
@@ -102,7 +110,7 @@ export class AnthropicHandler implements ApiHandler {
 				temperature: 1, // Must be exactly 1 when thinking is enabled
 				thinking: {
 					type: "enabled",
-					budget_tokens: budgetTokens, // Keep the user's requested budget
+					budget_tokens: adjustedBudgetTokens, // Use adjusted budget if needed
 				},
 				system: [
 					{
