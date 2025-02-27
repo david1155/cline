@@ -42,13 +42,61 @@ export class AnthropicHandler implements ApiHandler {
 			const secondLastMsgUserIndex = userMsgIndices[userMsgIndices.length - 2] ?? -1
 
 			// Create request options with thinking enabled
+			// Calculate max_tokens dynamically to ensure we don't exceed context window
+			// We'll use a buffer to avoid hitting the exact limit
+			const contextWindow = model.info.contextWindow || 200_000
+			const buffer = 5_000 // Buffer to avoid hitting exact limit
+
+			// Try to count tokens for the current messages to get a more accurate estimate
+			let inputTokenEstimate = 0
+			try {
+				// Use a simple heuristic for now - we'll estimate based on message length
+				// This is a rough estimate and will be replaced with actual token counting in the future
+				inputTokenEstimate = messages.reduce((acc, msg) => {
+					if (typeof msg.content === "string") {
+						return acc + msg.content.length / 3 // Rough estimate: 1 token ≈ 3 characters
+					} else if (Array.isArray(msg.content)) {
+						return (
+							acc +
+							msg.content.reduce((contentAcc, block) => {
+								if (block.type === "text") {
+									return contentAcc + (block.text?.length || 0) / 3
+								}
+								return contentAcc + 500 // Rough estimate for non-text blocks
+							}, 0)
+						)
+					}
+					return acc
+				}, 0)
+
+				// Add estimate for system prompt
+				inputTokenEstimate += systemPrompt.length / 3
+
+				// Round up and add safety margin
+				inputTokenEstimate = Math.ceil(inputTokenEstimate * 1.2)
+			} catch (error) {
+				console.error("Error estimating input tokens:", error)
+				// Default to a conservative estimate if token counting fails
+				inputTokenEstimate = 50_000
+			}
+
+			// Calculate available tokens for max_tokens
+			const availableTokens = Math.max(0, contextWindow - inputTokenEstimate - buffer)
+
+			// Cap max_tokens at the user's budget_tokens or available tokens, whichever is smaller
+			const maxTokensValue = Math.min(
+				budgetTokens,
+				availableTokens,
+				needs128kOutput ? 128000 : 64000, // Respect the 128k limit when needed
+			)
+
 			const requestOptions: any = {
 				model: modelId.replace("-think", ""), // Use the base model ID
-				max_tokens: needs128kOutput ? 128000 : Math.min(64000, model.info.maxTokens || 8192), // Use 128k limit when needed
+				max_tokens: maxTokensValue,
 				temperature: 1, // Must be exactly 1 when thinking is enabled
 				thinking: {
 					type: "enabled",
-					budget_tokens: budgetTokens,
+					budget_tokens: budgetTokens, // Keep the user's requested budget
 				},
 				system: [
 					{
@@ -104,7 +152,7 @@ export class AnthropicHandler implements ApiHandler {
 					"anthropic-beta": betaHeaders,
 				},
 			}
-			
+
 			// @ts-ignore - Bypass type checking
 			stream = await this.client.beta.promptCaching.messages.stream(requestOptions, options)
 		} else {
