@@ -82,12 +82,18 @@ export class AnthropicHandler implements ApiHandler {
 
 			// Calculate available tokens for max_tokens
 			const availableTokens = Math.max(0, contextWindow - inputTokenEstimate - buffer)
-
-			// Cap max_tokens at the user's budget_tokens or available tokens, whichever is smaller
-			const maxTokensValue = Math.min(
-				budgetTokens,
-				availableTokens,
-				needs128kOutput ? 128000 : 64000, // Respect the 128k limit when needed
+			
+			// According to Anthropic docs, max_tokens must be greater than thinking.budget_tokens
+			// We'll add a small buffer to ensure this constraint is met
+			const tokenBuffer = 1000 // Buffer to ensure max_tokens > budget_tokens
+			
+			// Cap max_tokens at available tokens or model limit, but ensure it's greater than budget_tokens
+			const maxTokensValue = Math.max(
+				budgetTokens + tokenBuffer, // Ensure max_tokens > budget_tokens
+				Math.min(
+					availableTokens,
+					needs128kOutput ? 128000 : 64000 // Respect the 128k limit when needed
+				)
 			)
 
 			const requestOptions: any = {
